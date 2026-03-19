@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Mapa de Workflows – Lead Capture n8n</title>
+<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e0e0e0; }
+  #header { padding: 12px 24px; background: #1a1d27; border-bottom: 1px solid #2d3148; display: flex; align-items: center; gap: 16px; }
+  #header h1 { font-size: 16px; font-weight: 600; color: #fff; }
+  #header p { font-size: 12px; color: #888; }
+  #legend { display: flex; gap: 20px; margin-left: auto; flex-wrap: wrap; align-items: center; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+  #status-bar { font-size: 11px; color: #555; display: flex; align-items: center; gap: 8px; }
+  #status-bar span { color: #4ade80; }
+  #btn-refresh { background: #1a1d27; border: 1px solid #2d3148; color: #888; font-size: 11px; padding: 4px 10px; border-radius: 5px; cursor: pointer; transition: all .15s; }
+  #btn-refresh:hover { border-color: #60a5fa; color: #60a5fa; }
+  #btn-refresh:disabled { opacity: .4; cursor: default; }
+  #container { display: flex; height: calc(100vh - 57px); }
+  #network { flex: 1; }
+  #panel { width: 420px; background: #1a1d27; border-left: 1px solid #2d3148; padding: 16px; overflow-y: auto; }
+  #panel h2 { font-size: 13px; font-weight: 600; color: #aaa; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+  #detail { display: none; }
+  #detail h3 { font-size: 14px; color: #fff; margin-bottom: 8px; line-height: 1.4; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; margin-bottom: 10px; }
+  .badge-lead { background: #1e3a5f; color: #60a5fa; }
+  .badge-subflow { background: #1e2d1e; color: #4ade80; }
+  .badge-external { background: #3d2a0a; color: #fbbf24; }
+  .badge-router { background: #2d1e3d; color: #c084fc; }
+  .info-row { font-size: 12px; color: #aaa; margin-bottom: 6px; }
+  #connections-out h4, #connections-in h4 { font-size: 12px; color: #888; margin: 12px 0 6px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .conn-item { font-size: 12px; color: #ccc; padding: 5px 8px; background: #0f1117; border-radius: 4px; margin-bottom: 4px; cursor: pointer; border: 1px solid #2d3148; }
+  .conn-item:hover { border-color: #60a5fa; color: #60a5fa; }
+  .conn-arrow { color: #888; margin-right: 4px; }
+  #hint { font-size: 12px; color: #555; line-height: 1.6; }
+  a.wf-link { color: #60a5fa; text-decoration: none; font-size: 12px; display: inline-block; margin-top: 8px; }
+  a.wf-link:hover { text-decoration: underline; }
+  /* Documentação */
+  .doc-sep { height: 1px; background: #2d3148; margin: 14px 0 0; }
+  .doc-header { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: .05em; margin: 12px 0 5px; font-weight: 600; }
+  .doc-item { font-size: 11.5px; color: #ccc; padding: 4px 0 4px 8px; border-left: 2px solid #2d3148; margin-bottom: 3px; line-height: 1.5; }
+  .doc-item a { color: #60a5fa; text-decoration: none; }
+  .doc-item a:hover { text-decoration: underline; }
+  .doc-item code { background: #161926; border-radius: 3px; padding: 1px 5px; font-size: 10.5px; color: #a78bfa; font-family: monospace; }
+  .doc-item .method { display:inline-block; padding:0 5px; border-radius:3px; font-size:10px; font-weight:700; margin-right:4px; }
+  .method-POST   { background:#1e3a5f; color:#60a5fa; }
+  .method-GET    { background:#1e2d1e; color:#4ade80; }
+  .method-PUT, .method-PATCH { background:#2d1e0a; color:#fb923c; }
+  .method-DELETE { background:#2d1e1e; color:#f87171; }
+  .doc-code-preview { color:#555; font-family:monospace; font-size:10px; display:block; margin-top:3px; white-space:pre-wrap; max-height:80px; overflow:hidden; }
+  #doc-no-data { font-size:12px; color:#444; padding:6px 0; }
+  /* Loading overlay */
+  #loading-overlay { position:fixed; inset:0; background:#0f1117; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; z-index:100; }
+  #loading-overlay p { color:#888; font-size:13px; }
+  .spinner { width:32px; height:32px; border:3px solid #2d3148; border-top-color:#60a5fa; border-radius:50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div id="loading-overlay">
+  <div class="spinner"></div>
+  <p>Carregando dados dos workflows…</p>
+</div>
+
+<div id="header">
+  <div>
+    <h1>Mapa de Workflows — Lead Capture n8n</h1>
+    <p>26 workflows ativos que criam leads no Salesforce + subflows e conexões</p>
+  </div>
+  <div id="status-bar">
+    Atualizado: <span id="last-update">—</span>
+    <button id="btn-refresh" onclick="forceRefresh()">⟳ Atualizar</button>
+  </div>
+  <div id="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div> Lead Capture</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6"></div> Roteador</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div> SubFlow</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div> Externo</div>
+  </div>
+</div>
+
+<div id="container">
+  <div id="network"></div>
+  <div id="panel">
+    <h2>Detalhes</h2>
+    <div id="hint">Clique em um nó para ver suas conexões e documentação.</div>
+    <div id="detail">
+      <h3 id="d-name"></h3>
+      <span id="d-badge" class="badge"></span>
+      <div class="info-row">ID: <span id="d-id"></span></div>
+      <div id="d-link-wrap"></div>
+      <div id="connections-out"></div>
+      <div id="connections-in"></div>
+      <div id="wf-doc" style="display:none">
+        <div class="doc-sep"></div>
+        <div id="doc-content"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const N8N_BASE = 'https://n8n.timeprimo.com';
+
+// WF_DATA será preenchido via /api/wf-data
+let WF_DATA = null;
+
+// ── DADOS ESTÁTICOS ────────────────────────────────────────────────────────
+
+const targetIds = new Set([
+  '7WyJuaN2yGeMgLes','oC4n2Mfqr5xc09aE','vtaf2xKkldFQaWhS','HJfPFDN8CQai2iTy',
+  'wUV5H6iKuj9NQaIj','TAajZzr5IXz64Dif','Iiqm4zstTraKehNQ','rvtoEVF0AFtfG9bn',
+  'D39YbOxrLw5ldIM2','5TXqpiI54hXFdAyq','DrfFW3LnFyJxXoK9','jwbxWDh6QpkBjk2k',
+  'OOBMiMBlMOUtnovi','MLLriTgQxSvWPE8Q','7MRucTinqJnBBFIb','i2cReypAGl74SZjt',
+  '5oeH8Hr8hfbIRoHs','Dm8ttrpegNchLBsU','X4OhhDfeXV6xhEfp','sSVevrtS0TM3C2T0',
+  'O99kMSTVQcnI7jOe','Jl49Lmk6AgzOFNX5','pbQpCkSOuDRtecpz','eJVQdYO155DJoHCV',
+  'G2QYUyrS3yRusgKb','QddKcpFWS7vHaZys'
+]);
+const routerIds = new Set(['xz7enrd2Jt5A6Dv2']);
+
+const nameMap = {
+  '7WyJuaN2yGeMgLes': 'Lançamentos - Lead Capture',
+  'oC4n2Mfqr5xc09aE': 'Grão - Planejamento Financeiro (Leads)',
+  'vtaf2xKkldFQaWhS': 'Portfel - Lead Capture Financial',
+  'HJfPFDN8CQai2iTy': 'BF - Insert Lead Clint - Hotmart',
+  'wUV5H6iKuj9NQaIj': 'Finclass - Suitability > Tier 2: Portfel/Grão',
+  'TAajZzr5IXz64Dif': 'Clint - SDR/Closer - Agendamento realizado',
+  'Iiqm4zstTraKehNQ': 'Portfel - Suitability (prd)',
+  'rvtoEVF0AFtfG9bn': 'Salesforce - WsCustomer GRAO',
+  'D39YbOxrLw5ldIM2': 'Grão - Desqualificado Arquivo Portfel',
+  '5TXqpiI54hXFdAyq': 'Grão - LeadCapture',
+  'DrfFW3LnFyJxXoK9': 'Grão - Lead Capture',
+  'jwbxWDh6QpkBjk2k': 'Portfel - ENS',
+  'OOBMiMBlMOUtnovi': 'Salesforce - CaseRestGRAO',
+  'MLLriTgQxSvWPE8Q': 'Portfel - Suitability V2',
+  '7MRucTinqJnBBFIb': 'Grão - Bookings - Reagendamento',
+  'i2cReypAGl74SZjt': 'Portfel - Suitability (hml) v2',
+  '5oeH8Hr8hfbIRoHs': 'Findor - Agendamento Portfel',
+  'Dm8ttrpegNchLBsU': 'Salesforce - CaseRestGRAO DEV',
+  'X4OhhDfeXV6xhEfp': 'Equity - Lead Capture',
+  'sSVevrtS0TM3C2T0': 'Finclass - Compradores',
+  'O99kMSTVQcnI7jOe': 'Agendamento - Bookings - Agendamento realizado',
+  'Jl49Lmk6AgzOFNX5': 'Salesforce LeadDev - Lead Cross PROD',
+  'pbQpCkSOuDRtecpz': 'Salesforce - WSCaseRest',
+  'eJVQdYO155DJoHCV': 'Portfel - SDR - Agendamento realizado',
+  'G2QYUyrS3yRusgKb': 'Finclass - DDI',
+  'QddKcpFWS7vHaZys': 'Salesforce LeadDev - Lead Cross',
+  'xz7enrd2Jt5A6Dv2': 'Financial - Define Portfel/Grão',
+  'SF_HANDLEAUTH': 'SubFlow - Salesforce HandleAuth',
+  'SF_BULKAPI':    'SubFlow - Salesforce BulkApi',
+  'SF_COMPOSITE':  'SubFlow - Salesforce Composite',
+  'EXT_GPLEG':     'Grupo Primo - Lead ou Cliente (PG)',
+  'EXT_SFORDER':   'Salesforce Order Management - PROD',
+  'EXT_LEADCROSS': 'Salesforce - Lead Cross',
+};
+
+const realIds = {
+  'SF_HANDLEAUTH': 'Cjr3GNU5vHU5ZaHt',
+  'SF_BULKAPI':    'pACUaII7TvDewlsV',
+  'SF_COMPOSITE':  'Sf6OPopONLMwUqGc',
+  'EXT_GPLEG':     'OMsIGyqY69UPOeD5',
+  'EXT_SFORDER':   'aIqfJiD2tLaFMv4Q',
+  'EXT_LEADCROSS': 'R97OxbUiOFrqrR4O',
+};
+
+function wfUrl(id) {
+  return `${N8N_BASE}/workflow/${realIds[id] || id}`;
+}
+
+const urlMap = Object.fromEntries(Object.keys(nameMap).map(id => [id, wfUrl(id)]));
+
+const rawEdges = [
+  ['xz7enrd2Jt5A6Dv2', 'vtaf2xKkldFQaWhS', 'HTTP POST (patrimônio ≥ 100k)'],
+  ['xz7enrd2Jt5A6Dv2', 'oC4n2Mfqr5xc09aE', 'HTTP POST (Grão)'],
+  ['7WyJuaN2yGeMgLes', 'EXT_SFORDER',   'HTTP POST'],
+  ['oC4n2Mfqr5xc09aE', 'EXT_GPLEG',     'HTTP POST'],
+  ['vtaf2xKkldFQaWhS', 'SF_HANDLEAUTH', 'executeWorkflow'],
+  ['vtaf2xKkldFQaWhS', 'oC4n2Mfqr5xc09aE', 'HTTP POST'],
+  ['wUV5H6iKuj9NQaIj', 'SF_HANDLEAUTH', 'executeWorkflow'],
+  ['Iiqm4zstTraKehNQ', 'SF_HANDLEAUTH', 'executeWorkflow'],
+  ['rvtoEVF0AFtfG9bn', 'SF_HANDLEAUTH', 'executeWorkflow'],
+  ['DrfFW3LnFyJxXoK9', 'EXT_GPLEG',     'HTTP POST'],
+  ['DrfFW3LnFyJxXoK9', 'SF_HANDLEAUTH', 'executeWorkflow'],
+  ['OOBMiMBlMOUtnovi', 'SF_HANDLEAUTH', 'executeWorkflow'],
+  ['5oeH8Hr8hfbIRoHs', 'SF_HANDLEAUTH', 'executeWorkflow'],
+  ['Dm8ttrpegNchLBsU', 'SF_HANDLEAUTH', 'executeWorkflow'],
+  ['X4OhhDfeXV6xhEfp', 'SF_HANDLEAUTH', 'executeWorkflow'],
+  ['Jl49Lmk6AgzOFNX5', 'SF_BULKAPI',    'executeWorkflow'],
+  ['Jl49Lmk6AgzOFNX5', 'SF_HANDLEAUTH', 'executeWorkflow'],
+  ['Jl49Lmk6AgzOFNX5', 'SF_COMPOSITE',  'executeWorkflow'],
+  ['Jl49Lmk6AgzOFNX5', 'Jl49Lmk6AgzOFNX5', 'executeWorkflow (self)'],
+  ['G2QYUyrS3yRusgKb', 'EXT_GPLEG',     'HTTP POST'],
+  ['QddKcpFWS7vHaZys', 'SF_BULKAPI',    'executeWorkflow'],
+  ['QddKcpFWS7vHaZys', 'SF_HANDLEAUTH', 'executeWorkflow'],
+  ['QddKcpFWS7vHaZys', 'SF_COMPOSITE',  'executeWorkflow'],
+  ['QddKcpFWS7vHaZys', 'EXT_LEADCROSS', 'executeWorkflow'],
+];
+
+// ── GRAFO ─────────────────────────────────────────────────────────────────
+
+function nodeColor(id) {
+  if (routerIds.has(id)) return { background:'#6d28d9', border:'#8b5cf6', highlight:{background:'#7c3aed',border:'#a78bfa'} };
+  if (targetIds.has(id))  return { background:'#1d4ed8', border:'#3b82f6', highlight:{background:'#2563eb',border:'#60a5fa'} };
+  if (id.startsWith('SF_')) return { background:'#14532d', border:'#22c55e', highlight:{background:'#166534',border:'#4ade80'} };
+  return { background:'#78350f', border:'#f59e0b', highlight:{background:'#92400e',border:'#fbbf24'} };
+}
+function nodeShape(id) {
+  if (routerIds.has(id)) return 'diamond';
+  if (id.startsWith('SF_')) return 'ellipse';
+  return 'box';
+}
+
+const allNodeIds = new Set();
+rawEdges.forEach(([f,t]) => { allNodeIds.add(f); allNodeIds.add(t); });
+targetIds.forEach(id => allNodeIds.add(id));
+routerIds.forEach(id => allNodeIds.add(id));
+
+const visNodes = [];
+allNodeIds.forEach(id => {
+  if (id === 'Jl49Lmk6AgzOFNX5') return;
+  visNodes.push({ id, label: (nameMap[id]||id).replace(/ - /g,'\n').replace(/ > /g,'\n> '), color: nodeColor(id), shape: nodeShape(id), font:{color:'#fff',size:12}, margin:8 });
+});
+if (!visNodes.find(n => n.id === 'Jl49Lmk6AgzOFNX5')) {
+  visNodes.push({ id:'Jl49Lmk6AgzOFNX5', label:'Salesforce LeadDev\nLead Cross PROD', color:nodeColor('Jl49Lmk6AgzOFNX5'), shape:'box', font:{color:'#fff',size:12}, margin:8 });
+}
+
+const visEdges = rawEdges.map(([f,t,lbl],i) => ({
+  id:i, from:f, to:t, label:lbl,
+  font:{color:'#888',size:10,align:'middle'},
+  color:{color:'#4b5563',highlight:'#60a5fa'},
+  arrows:'to',
+  smooth:{ type: f===t ? 'curvedCW' : 'dynamic', roundness: f===t ? 0.5 : 0.2 },
+  dashes: lbl.includes('HTTP'),
+}));
+
+const container = document.getElementById('network');
+const network = new vis.Network(container,
+  { nodes: new vis.DataSet(visNodes), edges: new vis.DataSet(visEdges) },
+  {
+    physics: { solver:'forceAtlas2Based', forceAtlas2Based:{gravitationalConstant:-60,springLength:160,springConstant:0.04,damping:0.4}, stabilization:{iterations:200} },
+    interaction: { hover:true, tooltipDelay:200 },
+    layout: { improvedLayout:true },
+  }
+);
+
+// ── PAINEL LATERAL ─────────────────────────────────────────────────────────
+
+function badgeFor(id) {
+  if (routerIds.has(id))   return ['badge-router','Roteador'];
+  if (targetIds.has(id))   return ['badge-lead','Lead Capture'];
+  if (id.startsWith('SF_')) return ['badge-subflow','SubFlow'];
+  return ['badge-external','Workflow Externo'];
+}
+
+network.on('click', params => {
+  if (!params.nodes.length) return;
+  const id   = params.nodes[0];
+  const name = nameMap[id] || id;
+  const [bClass, bLabel] = badgeFor(id);
+
+  document.getElementById('hint').style.display = 'none';
+  document.getElementById('detail').style.display = 'block';
+  document.getElementById('d-name').textContent = name;
+  const badge = document.getElementById('d-badge');
+  badge.className = 'badge ' + bClass;
+  badge.textContent = bLabel;
+  document.getElementById('d-id').textContent = id;
+
+  const url = urlMap[id];
+  document.getElementById('d-link-wrap').innerHTML = url
+    ? `<a class="wf-link" href="${url}" target="_blank">↗ Abrir no n8n</a>` : '';
+
+  const outs = rawEdges.filter(([f]) => f === id);
+  document.getElementById('connections-out').innerHTML = outs.length
+    ? `<h4>→ Chama (${outs.length})</h4>` + outs.map(([,t,l]) =>
+        `<div class="conn-item" onclick="focusNode('${t}')"><span class="conn-arrow">→</span>${nameMap[t]||t}<br><small style="color:#555">${l}</small></div>`).join('')
+    : '';
+
+  const ins = rawEdges.filter(([,t]) => t === id);
+  document.getElementById('connections-in').innerHTML = ins.length
+    ? `<h4>← Chamado por (${ins.length})</h4>` + ins.map(([f,,l]) =>
+        `<div class="conn-item" onclick="focusNode('${f}')"><span class="conn-arrow">←</span>${nameMap[f]||f}<br><small style="color:#555">${l}</small></div>`).join('')
+    : '';
+
+  renderDoc(id);
+});
+
+function focusNode(id) {
+  network.focus(id, { scale:1.2, animation:{duration:500,easingFunction:'easeInOutQuad'} });
+  network.selectNodes([id]);
+  network.emit('click', { nodes:[id], edges:[] });
+}
+
+// ── CARGA DE DADOS (API) ───────────────────────────────────────────────────
+
+async function loadData() {
+  try {
+    const resp = await fetch('/api/wf-data');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const json = await resp.json();
+    WF_DATA = json.data;
+    const ts = json.lastUpdate ? new Date(json.lastUpdate).toLocaleString('pt-BR') : '—';
+    document.getElementById('last-update').textContent = ts;
+  } catch (err) {
+    document.getElementById('last-update').textContent = 'erro ao carregar';
+    console.error('loadData:', err);
+  } finally {
+    document.getElementById('loading-overlay').style.display = 'none';
+  }
+}
+
+async function forceRefresh() {
+  const btn = document.getElementById('btn-refresh');
+  btn.disabled = true;
+  btn.textContent = '…';
+  try {
+    await fetch('/api/refresh', { method: 'POST' });
+    await loadData();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⟳ Atualizar';
+  }
+}
+
+// ── DOCUMENTAÇÃO ──────────────────────────────────────────────────────────
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+const NODE_LABELS = {
+  'n8n-nodes-base.webhook':               '🔗 Webhook',
+  'n8n-nodes-base.httpRequest':           '🌐 HTTP Request',
+  'n8n-nodes-base.executeWorkflow':       '⚡ Execute Workflow',
+  'n8n-nodes-base.if':                    '🔀 IF',
+  'n8n-nodes-base.switch':                '🔀 Switch',
+  'n8n-nodes-base.set':                   '✏️ Set',
+  'n8n-nodes-base.code':                  '💻 Code',
+  'n8n-nodes-base.noOp':                  '⬜ No-op',
+  'n8n-nodes-base.merge':                 '🔀 Merge',
+  'n8n-nodes-base.respondToWebhook':      '↩️ Respond',
+  'n8n-nodes-base.scheduleTrigger':       '🕐 Schedule',
+  'n8n-nodes-base.manualTrigger':         '▶️ Manual',
+  'n8n-nodes-base.errorTrigger':          '🚨 Error Trigger',
+  'n8n-nodes-base.executeWorkflowTrigger':'⚡ WF Trigger',
+  'n8n-nodes-base.supabase':              '🗄️ Supabase',
+  'n8n-nodes-base.googleSheets':          '📊 Google Sheets',
+  'n8n-nodes-base.slack':                 '💬 Slack',
+  'n8n-nodes-base.stickyNote':            '📝 Nota',
+  'n8n-nodes-base.function':              '💻 Function',
+  'n8n-nodes-base.functionItem':          '💻 FunctionItem',
+  'n8n-nodes-base.wait':                  '⏳ Wait',
+  'n8n-nodes-base.splitInBatches':        '📦 SplitBatches',
+  'n8n-nodes-base.gmail':                 '📧 Gmail',
+  'n8n-nodes-base.sendGrid':              '📧 SendGrid',
+  'n8n-nodes-base.emailSend':             '📧 Email',
+  'n8n-nodes-base.postgres':              '🐘 Postgres',
+  'n8n-nodes-base.redis':                 '🔴 Redis',
+};
+function nodeLabel(type) { return NODE_LABELS[type] || ('🔧 ' + type.split('.').pop()); }
+
+function docExtractTriggers(nodes) {
+  const out = [];
+  for (const n of nodes) {
+    const t = n.type||'', p = n.parameters||{};
+    if (t === 'n8n-nodes-base.webhook')
+      out.push(`<code>${p.httpMethod||'POST'} /${p.path||'—'}</code> → <code>${escHtml(n.name)}</code>`);
+    else if (t === 'n8n-nodes-base.scheduleTrigger')
+      out.push(`Schedule trigger (agendado)`);
+    else if (t === 'n8n-nodes-base.executeWorkflowTrigger')
+      out.push(`Chamado por outro workflow (<code>executeWorkflow</code>)`);
+    else if (t === 'n8n-nodes-base.manualTrigger')
+      out.push(`Trigger manual`);
+    else if (t === 'n8n-nodes-base.errorTrigger')
+      out.push(`Error trigger (captura falhas de outro workflow)`);
+    else if (t === 'n8n-nodes-base.formTrigger')
+      out.push(`Form trigger (formulário n8n nativo)`);
+  }
+  return out;
+}
+
+function docExtractCredentials(nodes) {
+  const creds = new Set();
+  for (const n of nodes)
+    for (const [,val] of Object.entries(n.credentials||{}))
+      creds.add((val&&val.name) ? val.name : '—');
+  return [...creds].sort();
+}
+
+function docExtractHttpCalls(nodes) {
+  return nodes.filter(n => n.type==='n8n-nodes-base.httpRequest').map(n => {
+    let url = n.parameters?.url||'—';
+    if (url.length>120) url = url.slice(0,120)+'…';
+    return { name:n.name, method:(n.parameters?.method||'GET').toUpperCase(), url };
+  });
+}
+
+function docExtractCalledWorkflows(nodes) {
+  return nodes.filter(n => n.type==='n8n-nodes-base.executeWorkflow').map(n => {
+    const p = n.parameters||{};
+    const wfInfo = p.workflowId||p.workflow||{};
+    const wfId = typeof wfInfo==='object' ? (wfInfo.value||wfInfo.id||'') : String(wfInfo);
+    return { nodeName:n.name, wfId };
+  });
+}
+
+function docExtractConditions(nodes) {
+  const out = [];
+  for (const n of nodes) {
+    if (n.type==='n8n-nodes-base.if') {
+      const conds = n.parameters?.conditions?.conditions||[];
+      const fields = [...new Set(conds.map(c => {
+        const m = String(c.leftValue||'').match(/\["?(\w+)"?\]/g);
+        return m ? m[m.length-1].replace(/[\[\]"]/g,'') : '';
+      }).filter(Boolean))].slice(0,3);
+      const hint = fields.length ? ` (testa: ${fields.map(f=>`<code>${f}</code>`).join(', ')})` : '';
+      out.push(`IF <code>${escHtml(n.name)}</code>${hint}`);
+    } else if (n.type==='n8n-nodes-base.switch') {
+      const val = String(n.parameters?.value1||n.parameters?.value||'—').slice(0,70);
+      const rules = (n.parameters?.rules?.rules||[]).length;
+      out.push(`Switch <code>${escHtml(n.name)}</code> — ${rules} ramo(s), por: <code>${escHtml(val)}</code>`);
+    }
+  }
+  return out;
+}
+
+function docExtractSetFields(nodes) {
+  const out = [];
+  for (const n of nodes) {
+    if (n.type!=='n8n-nodes-base.set') continue;
+    const p = n.parameters||{};
+    const assignments = p.assignments?.assignments||[];
+    let fields = assignments.length
+      ? assignments.map(a=>a.name||'?')
+      : [...(p.values?.string||[]),...(p.values?.number||[]),...(p.values?.boolean||[])].map(e=>e.name||'?');
+    if (fields.length) out.push({ nodeName:n.name, fields:fields.slice(0,15) });
+  }
+  return out;
+}
+
+function docExtractServices(nodes) {
+  const out = [];
+  for (const n of nodes) {
+    const t=n.type||'', p=n.parameters||{};
+    if (t==='n8n-nodes-base.supabase') {
+      out.push(`🗄️ Supabase <code>${p.operation||'—'}</code> → tabela <code>${escHtml(p.tableId||p.table||'—')}</code> (nó <code>${escHtml(n.name)}</code>)`);
+    } else if (t==='n8n-nodes-base.googleSheets') {
+      const doc = p.documentId?.cachedResultName||p.sheetName?.cachedResultName||'—';
+      out.push(`📊 Google Sheets <code>${p.operation||p.resource||'—'}</code> → "${escHtml(doc)}" (nó <code>${escHtml(n.name)}</code>)`);
+    } else if (t==='n8n-nodes-base.slack') {
+      out.push(`💬 Slack (canal <code>${escHtml(String(p.channel||p.channelId||'—').slice(0,40))}</code>)`);
+    } else if (['n8n-nodes-base.gmail','n8n-nodes-base.emailSend','n8n-nodes-base.sendGrid'].includes(t)) {
+      out.push(`📧 Email — nó <code>${escHtml(n.name)}</code>`);
+    } else if (['n8n-nodes-base.postgres','n8n-nodes-base.mysql'].includes(t)) {
+      out.push(`🐘 DB <code>${t.split('.').pop()}</code> — nó <code>${escHtml(n.name)}</code>`);
+    }
+  }
+  return out;
+}
+
+function docGetNodeSummary(nodes) {
+  const map = {};
+  for (const n of nodes) {
+    if (n.type==='n8n-nodes-base.stickyNote') continue;
+    const label = nodeLabel(n.type);
+    (map[label] = map[label]||[]).push(n.name);
+  }
+  return Object.entries(map)
+    .sort(([,a],[,b])=>b.length-a.length)
+    .map(([label,names])=>({label,count:names.length,names}));
+}
+
+function renderDoc(nodeId) {
+  const realId = realIds[nodeId] || nodeId;
+  const wfDocEl   = document.getElementById('wf-doc');
+  const docContent = document.getElementById('doc-content');
+  wfDocEl.style.display = 'block';
+
+  if (!WF_DATA) {
+    docContent.innerHTML = '<div id="doc-no-data">Dados ainda carregando…</div>';
+    return;
+  }
+  const wf = WF_DATA[realId];
+  if (!wf||!wf.nodes) {
+    docContent.innerHTML = '<div id="doc-no-data" style="color:#444">Sem dados para este nó.</div>';
+    return;
+  }
+
+  const nodes = wf.nodes||[];
+  let html = '';
+
+  const triggers = docExtractTriggers(nodes);
+  if (triggers.length) {
+    html += `<div class="doc-header">⚡ Trigger</div>`;
+    triggers.forEach(t => { html += `<div class="doc-item">${t}</div>`; });
+  }
+
+  const creds = docExtractCredentials(nodes);
+  if (creds.length) {
+    html += `<div class="doc-header">🔑 Credenciais (${creds.length})</div>`;
+    creds.forEach(c => { html += `<div class="doc-item"><code>${escHtml(c)}</code></div>`; });
+  }
+
+  const calls = docExtractHttpCalls(nodes);
+  if (calls.length) {
+    html += `<div class="doc-header">🌐 APIs Chamadas (${calls.length})</div>`;
+    calls.forEach(c => {
+      html += `<div class="doc-item"><span class="method method-${c.method}">${c.method}</span><code>${escHtml(c.name)}</code><br><span style="color:#555;font-size:10px;word-break:break-all">${escHtml(c.url)}</span></div>`;
+    });
+  }
+
+  const calledWfs = docExtractCalledWorkflows(nodes);
+  if (calledWfs.length) {
+    html += `<div class="doc-header">⚡ Chama Workflows (${calledWfs.length})</div>`;
+    calledWfs.forEach(c => {
+      html += `<div class="doc-item"><code>${escHtml(c.nodeName)}</code> → <a href="${wfUrl(c.wfId)}" target="_blank">${escHtml(nameMap[c.wfId]||c.wfId)}</a></div>`;
+    });
+  }
+
+  const conds = docExtractConditions(nodes);
+  if (conds.length) {
+    html += `<div class="doc-header">🔀 Condições (${conds.length})</div>`;
+    conds.forEach(c => { html += `<div class="doc-item">${c}</div>`; });
+  }
+
+  const setFields = docExtractSetFields(nodes);
+  if (setFields.length) {
+    html += `<div class="doc-header">✏️ Campos Mapeados (${setFields.length} Set nodes)</div>`;
+    setFields.forEach(s => {
+      html += `<div class="doc-item"><code>${escHtml(s.nodeName)}</code>:<br>${s.fields.map(f=>`<code>${escHtml(f)}</code>`).join(' ')}</div>`;
+    });
+  }
+
+  const services = docExtractServices(nodes);
+  if (services.length) {
+    html += `<div class="doc-header">🗄️ Serviços</div>`;
+    services.forEach(s => { html += `<div class="doc-item">${s}</div>`; });
+  }
+
+  const codeNodes = nodes.filter(n=>['n8n-nodes-base.code','n8n-nodes-base.function','n8n-nodes-base.functionItem'].includes(n.type));
+  if (codeNodes.length) {
+    html += `<div class="doc-header">💻 Lógica de Código (${codeNodes.length})</div>`;
+    codeNodes.forEach(n => {
+      const raw = n.parameters?.jsCode||n.parameters?.functionCode||'';
+      const preview = escHtml(raw.slice(0,250));
+      html += `<div class="doc-item"><code>${escHtml(n.name)}</code>${raw?`<span class="doc-code-preview">${preview}${raw.length>250?'…':''}</span>`:''}</div>`;
+    });
+  }
+
+  const summary = docGetNodeSummary(nodes);
+  html += `<div class="doc-header">📋 Estrutura — ${nodes.length} nós</div>`;
+  summary.forEach(s => {
+    const preview = s.names.slice(0,2).map(n=>`<code>${escHtml(n)}</code>`).join(', ');
+    const more = s.count>2 ? ` <span style="color:#555">+${s.count-2}</span>` : '';
+    html += `<div class="doc-item"><span style="color:#888">${s.label}</span> ×${s.count}: ${preview}${more}</div>`;
+  });
+
+  docContent.innerHTML = html;
+}
+
+// Inicia carga de dados
+loadData();
+</script>
+</body>
+</html>
