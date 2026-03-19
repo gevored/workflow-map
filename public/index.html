@@ -212,13 +212,32 @@ rawEdges.forEach(([f,t]) => { allNodeIds.add(f); allNodeIds.add(t); });
 targetIds.forEach(id => allNodeIds.add(id));
 routerIds.forEach(id => allNodeIds.add(id));
 
+// Escala de tamanho baseada em execucoes (30d)
+function execCount(id) {
+  const realId = realIds[id] || id;
+  return (typeof WF_DATA !== 'undefined' && WF_DATA && WF_DATA[realId]?.executions?.total) || 0;
+}
+const allExecs = [...allNodeIds].map(execCount);
+const maxExec  = Math.max(...allExecs, 1);
+function nodeFont(id) {
+  const n = execCount(id);
+  const size = n === 0 ? 11 : Math.round(11 + (n / maxExec) * 7);
+  return { color:'#fff', size };
+}
+function nodeTitle(id) {
+  const realId = realIds[id] || id;
+  const ex = typeof WF_DATA !== 'undefined' && WF_DATA && WF_DATA[realId]?.executions;
+  if (!ex || ex.total === 0) return nameMap[id] || id;
+  return `${nameMap[id]||id}\n${ex.total} execuções (30d) | ${ex.error} erros`;
+}
+
 const visNodes = [];
 allNodeIds.forEach(id => {
   if (id === 'Jl49Lmk6AgzOFNX5') return;
-  visNodes.push({ id, label: (nameMap[id]||id).replace(/ - /g,'\n').replace(/ > /g,'\n> '), color: nodeColor(id), shape: nodeShape(id), font:{color:'#fff',size:12}, margin:8 });
+  visNodes.push({ id, label: (nameMap[id]||id).replace(/ - /g,'\n').replace(/ > /g,'\n> '), title: nodeTitle(id), color: nodeColor(id), shape: nodeShape(id), font: nodeFont(id), margin:8 });
 });
 if (!visNodes.find(n => n.id === 'Jl49Lmk6AgzOFNX5')) {
-  visNodes.push({ id:'Jl49Lmk6AgzOFNX5', label:'Salesforce LeadDev\nLead Cross PROD', color:nodeColor('Jl49Lmk6AgzOFNX5'), shape:'box', font:{color:'#fff',size:12}, margin:8 });
+  visNodes.push({ id:'Jl49Lmk6AgzOFNX5', label:'Salesforce LeadDev\nLead Cross PROD', title: nodeTitle('Jl49Lmk6AgzOFNX5'), color:nodeColor('Jl49Lmk6AgzOFNX5'), shape:'box', font: nodeFont('Jl49Lmk6AgzOFNX5'), margin:8 });
 }
 
 const visEdges = rawEdges.map(([f,t,lbl],i) => ({
@@ -279,8 +298,47 @@ network.on('click', params => {
         `<div class="conn-item" onclick="focusNode('${f}')"><span class="conn-arrow">←</span>${nameMap[f]||f}<br><small style="color:#555">${l}</small></div>`).join('')
     : '';
 
+  renderExec(id);
   renderDoc(id);
 });
+
+function renderExec(nodeId) {
+  const realId = realIds[nodeId] || nodeId;
+  const wfDocEl = document.getElementById('wf-doc');
+  const docContent = document.getElementById('doc-content');
+  wfDocEl.style.display = 'block';
+
+  if (typeof WF_DATA === 'undefined' || !WF_DATA || !WF_DATA[realId]?.executions) {
+    docContent.innerHTML = '';
+    return;
+  }
+  const ex = WF_DATA[realId].executions;
+  if (!ex.total && !ex.lastRun) { docContent.innerHTML = ''; return; }
+
+  const errPct  = ex.total > 0 ? Math.round(ex.error / ex.total * 100) : 0;
+  const errColor = errPct > 10 ? '#f87171' : errPct > 0 ? '#fb923c' : '#4ade80';
+  const lastRun = ex.lastRun ? ex.lastRun.slice(0,16).replace('T',' ') : '—';
+  const statusDot = ex.lastStatus === 'success' ? '🟢' : ex.lastStatus === 'error' ? '🔴' : '⚪';
+
+  docContent.innerHTML = `
+    <div class="doc-header">📊 Execuções — últimos 30 dias</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">
+      <div style="background:#0f1117;border-radius:6px;padding:8px;text-align:center">
+        <div style="font-size:18px;font-weight:700;color:#60a5fa">${ex.total.toLocaleString('pt-BR')}</div>
+        <div style="font-size:10px;color:#555;margin-top:2px">Total</div>
+      </div>
+      <div style="background:#0f1117;border-radius:6px;padding:8px;text-align:center">
+        <div style="font-size:18px;font-weight:700;color:#4ade80">${ex.success.toLocaleString('pt-BR')}</div>
+        <div style="font-size:10px;color:#555;margin-top:2px">Sucesso</div>
+      </div>
+      <div style="background:#0f1117;border-radius:6px;padding:8px;text-align:center">
+        <div style="font-size:18px;font-weight:700;color:${errColor}">${ex.error.toLocaleString('pt-BR')}</div>
+        <div style="font-size:10px;color:#555;margin-top:2px">Erros (${errPct}%)</div>
+      </div>
+    </div>
+    <div class="doc-item">${statusDot} Última execução: <code>${lastRun}</code></div>
+  `;
+}
 
 function focusNode(id) {
   network.focus(id, { scale:1.2, animation:{duration:500,easingFunction:'easeInOutQuad'} });

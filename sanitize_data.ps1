@@ -2,7 +2,24 @@
 # Nenhum token, credencial ou segredo e incluido
 
 $raw_dir = "..\script_python\docs\wf_json"
+$csv_file = "..\script_python\workflows_salesforce_lead.csv"
 $out     = "public\workflows_data.js"
+
+# Carrega execucoes do CSV
+$execMap = @{}
+if (Test-Path $csv_file) {
+    Import-Csv $csv_file | ForEach-Object {
+        $execMap[$_.id] = @{
+            total      = [int]($_.total_execucoes_30d)
+            success    = [int]($_.execucoes_sucesso_30d)
+            error      = [int]($_.execucoes_erro_30d)
+            lastRun    = $_.ultima_execucao
+            lastStatus = $_.ultimo_status
+            active     = ($_.status -eq "Ativo")
+        }
+    }
+    Write-Host "CSV carregado: $($execMap.Count) registros"
+}
 
 $ids = "7WyJuaN2yGeMgLes","oC4n2Mfqr5xc09aE","vtaf2xKkldFQaWhS","HJfPFDN8CQai2iTy",
        "wUV5H6iKuj9NQaIj","TAajZzr5IXz64Dif","Iiqm4zstTraKehNQ","rvtoEVF0AFtfG9bn",
@@ -99,11 +116,13 @@ foreach ($id in $ids) {
         foreach ($node in $wf.nodes) {
             $safe_nodes += Project-Node $node
         }
+        $exec = if ($execMap.ContainsKey($id)) { $execMap[$id] } else { @{ total=0; success=0; error=0; lastRun=""; lastStatus=""; active=$wf.active } }
         $result[$id] = @{
-            id     = $wf.id
-            name   = $wf.name
-            active = $wf.active
-            nodes  = $safe_nodes
+            id         = $wf.id
+            name       = $wf.name
+            active     = $wf.active
+            nodes      = $safe_nodes
+            executions = $exec
         }
         Write-Host "OK: $($wf.name) ($($safe_nodes.Count) nos)"
     } catch {
