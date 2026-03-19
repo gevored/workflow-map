@@ -2,8 +2,6 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "node server.js"
-healthcheckPath = "/health"
+startCommand = "npx serve public -l $PORT"
+healthcheckPath = "/"
 healthcheckTimeout = 30
-restartPolicyType = "on_failure"
-restartPolicyMaxRetries = 3

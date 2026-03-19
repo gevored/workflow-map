@@ -14,10 +14,6 @@
   .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; }
   .legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
   #status-bar { font-size: 11px; color: #555; display: flex; align-items: center; gap: 8px; }
-  #status-bar span { color: #4ade80; }
-  #btn-refresh { background: #1a1d27; border: 1px solid #2d3148; color: #888; font-size: 11px; padding: 4px 10px; border-radius: 5px; cursor: pointer; transition: all .15s; }
-  #btn-refresh:hover { border-color: #60a5fa; color: #60a5fa; }
-  #btn-refresh:disabled { opacity: .4; cursor: default; }
   #container { display: flex; height: calc(100vh - 57px); }
   #network { flex: 1; }
   #panel { width: 420px; background: #1a1d27; border-left: 1px solid #2d3148; padding: 16px; overflow-y: auto; }
@@ -71,8 +67,7 @@
     <p>26 workflows ativos que criam leads no Salesforce + subflows e conexões</p>
   </div>
   <div id="status-bar">
-    Atualizado: <span id="last-update">—</span>
-    <button id="btn-refresh" onclick="forceRefresh()">⟳ Atualizar</button>
+    Dados: <span id="last-update">carregando…</span>
   </div>
   <div id="legend">
     <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div> Lead Capture</div>
@@ -102,11 +97,10 @@
   </div>
 </div>
 
+<script src="workflows_data.js"></script>
 <script>
 const N8N_BASE = 'https://n8n.timeprimo.com';
-
-// WF_DATA será preenchido via /api/wf-data
-let WF_DATA = null;
+// WF_DATA definido por workflows_data.js (carregado acima)
 
 // ── DADOS ESTÁTICOS ────────────────────────────────────────────────────────
 
@@ -294,36 +288,6 @@ function focusNode(id) {
   network.emit('click', { nodes:[id], edges:[] });
 }
 
-// ── CARGA DE DADOS (API) ───────────────────────────────────────────────────
-
-async function loadData() {
-  try {
-    const resp = await fetch('/api/wf-data');
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const json = await resp.json();
-    WF_DATA = json.data;
-    const ts = json.lastUpdate ? new Date(json.lastUpdate).toLocaleString('pt-BR') : '—';
-    document.getElementById('last-update').textContent = ts;
-  } catch (err) {
-    document.getElementById('last-update').textContent = 'erro ao carregar';
-    console.error('loadData:', err);
-  } finally {
-    document.getElementById('loading-overlay').style.display = 'none';
-  }
-}
-
-async function forceRefresh() {
-  const btn = document.getElementById('btn-refresh');
-  btn.disabled = true;
-  btn.textContent = '…';
-  try {
-    await fetch('/api/refresh', { method: 'POST' });
-    await loadData();
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '⟳ Atualizar';
-  }
-}
 
 // ── DOCUMENTAÇÃO ──────────────────────────────────────────────────────────
 
@@ -561,8 +525,10 @@ function renderDoc(nodeId) {
   docContent.innerHTML = html;
 }
 
-// Inicia carga de dados
-loadData();
+// Esconde loading e mostra status
+document.getElementById('loading-overlay').style.display = 'none';
+document.getElementById('last-update').textContent =
+  typeof WF_DATA !== 'undefined' && WF_DATA ? 'ok' : 'não carregado';
 </script>
 </body>
 </html>
