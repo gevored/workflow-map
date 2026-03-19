@@ -46,17 +46,36 @@ let cache = {
 
 // ── HELPERS DE API ──────────────────────────────────────────────────────────
 
-function apiGet(urlPath) {
+function apiGet(urlPath, redirectCount = 0) {
   return new Promise((resolve, reject) => {
     const fullUrl = `${N8N_URL}${urlPath}`;
     const req = https.request(fullUrl, {
-      headers: { 'X-N8N-API-KEY': API_KEY },
+      headers: {
+        'X-N8N-API-KEY': API_KEY,
+        'Accept': 'application/json',
+        'User-Agent': 'workflow-map/1.0',
+      },
     }, res => {
+      // Segue redirects (301/302/307/308)
+      if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location && redirectCount < 5) {
+        console.log(`[INFO] Redirect ${res.statusCode} → ${res.headers.location}`);
+        const redirectUrl = new URL(res.headers.location, fullUrl);
+        const savedUrl = N8N_URL;
+        // Atualiza base URL se necessário e chama recursivamente
+        return apiGet(redirectUrl.pathname + redirectUrl.search, redirectCount + 1)
+          .then(resolve).catch(reject);
+      }
+      if (res.statusCode !== 200) {
+        console.error(`[ERRO] HTTP ${res.statusCode} em ${urlPath}`);
+      }
       let raw = '';
       res.on('data', chunk => { raw += chunk; });
       res.on('end', () => {
         try { resolve(JSON.parse(raw)); }
-        catch (e) { reject(new Error(`JSON inválido em ${urlPath}: ${e.message}`)); }
+        catch (e) {
+          console.error(`[ERRO] Resposta não-JSON em ${urlPath} (HTTP ${res.statusCode}):`, raw.slice(0, 200));
+          reject(new Error(`HTTP ${res.statusCode} — resposta não é JSON`));
+        }
       });
     });
     req.on('error', reject);
